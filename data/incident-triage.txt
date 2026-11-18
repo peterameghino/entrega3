@@ -1,0 +1,42 @@
+PROCEDIMIENTO DE TRIAGE DE INCIDENTES
+
+Documento sintético con fines educativos. Define un proceso de triage de ejemplo para un equipo de operaciones
+ficticio.
+
+1. OBJETIVO
+
+El triage decide, en los primeros 15 minutos, la severidad de un incidente, quién lo coordina y cuál es la primera
+acción de mitigación. El objetivo es restaurar el servicio, no encontrar la causa raíz durante el incidente.
+
+2. NIVELES DE SEVERIDAD
+
+SEV1: caída total de un servicio crítico para clientes, o pérdida o exposición de datos. Respuesta inmediata, las 24
+horas. Se designa un coordinador del incidente y se actualiza el estado cada 30 minutos.
+
+SEV2: degradación importante (errores o latencia altos) de un servicio crítico, o caída total de un servicio no
+crítico. Respuesta en menos de 30 minutos. Actualización de estado cada hora.
+
+SEV3: degradación menor, con alternativa disponible para los usuarios. Se atiende en horario laboral.
+
+SEV4: problema cosmético o sin impacto en usuarios. Se registra como ticket.
+
+Si hay dudas entre dos niveles, se elige el más alto y se baja después con evidencia.
+
+3. ROLES
+
+Coordinador del incidente: decide prioridades, asigna tareas y comunica el estado. No ejecuta cambios técnicos.
+Responsable técnico: investiga y aplica la mitigación acordada.
+Comunicaciones: mantiene informados a soporte y a las áreas afectadas.
+
+4. PRIMEROS PASOS
+
+a) Confirmar el impacto con datos: tasa de errores, latencia, cantidad de usuarios afectados.
+b) Revisar cambios recientes: despliegues, cambios de configuración y de infraestructura de las últimas 24 horas.
+c) Si el inicio coincide con un despliegue, el rollback es la primera opción de mitigación.
+d) Registrar en la línea de tiempo del incidente cada observación y cada acción, con la hora.
+
+5. CIERRE Y REVISIÓN
+
+Un incidente se cierra cuando las métricas vuelven a la línea base durante al menos 30 minutos. Todo SEV1 y SEV2
+requiere una revisión posterior sin culpables (postmortem) en un plazo de 5 días hábiles, con acciones correctivas
+asignadas y fechadas.

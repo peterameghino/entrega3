@@ -1,0 +1,71 @@
+[project]
+name = "unified-async-llm-client"
+version = "0.1.0"
+description = "Unified async LLM client, validated LCEL extraction pipeline and local RAG (Coderhouse AI Engineering)."
+readme = "README.md"
+requires-python = ">=3.12"
+# Runtime and development dependencies are installed from requirements*.txt.
+# This file holds project metadata and tool configuration only; the project is
+# run from source and is not built or published as a package.
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+extend-exclude = [".worktrees"]
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "B",     # flake8-bugbear
+    "UP",    # pyupgrade
+    "SIM",   # flake8-simplify
+    "ASYNC", # flake8-async
+    "RUF",   # ruff-specific rules
+]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "clients",
+    "config",
+    "ejemplo_extraccion",
+    "ejemplo_rag",
+    "errors",
+    "extraction",
+    "ingestar",
+    "llm_manager",
+    "main",
+    "rag",
+    "schemas",
+]
+
+[tool.mypy]
+# Application code only: tests use duck-typed SDK fakes that add noise without value.
+python_version = "3.12"
+files = [
+    "clients",
+    "config.py",
+    "ejemplo_extraccion.py",
+    "ejemplo_rag.py",
+    "errors.py",
+    "extraction",
+    "ingestar.py",
+    "llm_manager.py",
+    "main.py",
+    "rag",
+    "schemas.py",
+]
+plugins = ["pydantic.mypy"]
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_reexport = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+pythonpath = ["."]
+testpaths = ["tests"]
+norecursedirs = [".worktrees", ".venv", ".git"]
