@@ -284,3 +284,104 @@ def test_create_rag_from_env_reuses_module_1_configuration(monkeypatch: pytest.M
     pipeline = create_rag_from_env(top_k=2, db_dir=tmp_path, embeddings=KeywordEmbeddings())
     assert pipeline.retriever.top_k == 2
     assert pipeline.retriever.db_dir == tmp_path
+
+
+# --- Punto de entrada pedido por la consigna: async def get_rag_response(query: str) -------------------------------
+
+
+@pytest.fixture
+def entrypoint(monkeypatch: pytest.MonkeyPatch, db: Path):
+    """Sustituye `create_rag_from_env` por el pipeline guionado y registra los argumentos recibidos."""
+    import rag.chain
+
+    monkeypatch.setattr(rag.chain, "_shared_embeddings", None)
+    state: dict[str, Any] = {"calls": []}
+
+    def install(*script: Any, min_similarity: float = 0.1):
+        pipeline, model = make_rag(db, *script, min_similarity=min_similarity)
+        state["model"] = model
+
+        def fake_create(*args: Any, **kwargs: Any) -> RAGPipeline:
+            state["calls"].append((args, kwargs))
+            return pipeline
+
+        monkeypatch.setattr(rag.chain, "create_rag_from_env", fake_create)
+        return state
+
+    return install
+
+
+def test_get_rag_response_matches_the_required_async_signature():
+    import inspect
+
+    from rag import get_rag_response as exported
+    from rag.chain import get_rag_response
+
+    assert exported is get_rag_response
+    assert inspect.iscoroutinefunction(get_rag_response)
+    signature = inspect.signature(get_rag_response)
+    assert list(signature.parameters) == ["query"]
+    assert signature.parameters["query"].annotation is str
+    assert signature.return_annotation is RespuestaRAG
+
+
+async def test_get_rag_response_delegates_to_the_pipeline_and_returns_a_valid_answer(entrypoint):
+    from rag import LocalEmbeddings, get_rag_response
+
+    state = entrypoint(answer_msg(GROUNDED), answer_msg(GROUNDED))
+    result = await get_rag_response(POSITIVE)
+    assert isinstance(result, RespuestaRAG)
+    assert result.pregunta == POSITIVE
+    assert result.evidencia_suficiente is True
+    assert [f.id for f in result.fuentes] == [THROTTLING]
+    assert result.fuentes[0] in result.recuperados
+    await get_rag_response(POSITIVE)
+    assert state["model"].calls == 2
+    first, second = (kwargs["embeddings"] for _, kwargs in state["calls"])
+    assert isinstance(first, LocalEmbeddings)
+    assert first is second  # el modelo de embeddings se comparte entre llamadas, no se vuelve a cargar
+
+
+async def test_get_rag_response_preserves_abstention(entrypoint):
+    from rag import get_rag_response
+
+    state = entrypoint(AssertionError("no debe llamarse"), min_similarity=0.3)
+    result = await get_rag_response(NEGATIVE)
+    assert result.evidencia_suficiente is False
+    assert result.respuesta == MENSAJE_ABSTENCION
+    assert result.fuentes == []
+    assert state["model"].calls == 0
+
+
+async def test_get_rag_response_preserves_input_and_provider_errors(entrypoint):
+    from rag import get_rag_response
+
+    state = entrypoint(LLMAuthenticationError("401"))
+    with pytest.raises(InvalidInputError):  # validada antes de buscar o llamar al modelo
+        await get_rag_response("   ")
+    assert state["model"].calls == 0
+    with pytest.raises(LLMAuthenticationError):  # error permanente: sin reintentos
+        await get_rag_response(POSITIVE)
+    assert state["model"].calls == 1
+
+
+async def test_get_rag_response_uses_env_configuration_and_reports_missing_index(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    import rag.chain
+    from rag import get_rag_response
+
+    monkeypatch.setattr(rag.chain, "_shared_embeddings", None)
+    with pytest.raises(ConfigurationError):  # sin .env: falla antes de buscar o cargar modelos
+        await get_rag_response(POSITIVE)
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("LLM_MODEL", "test-model")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", FAKE_KEY)
+    real_create = rag.chain.create_rag_from_env
+    monkeypatch.setattr(
+        rag.chain,
+        "create_rag_from_env",
+        lambda **kw: real_create(db_dir=tmp_path / "sin-indice", embeddings=KeywordEmbeddings()),
+    )
+    with pytest.raises(KnowledgeBaseError, match="ingestar"):
+        await get_rag_response(POSITIVE)

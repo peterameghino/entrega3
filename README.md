@@ -39,7 +39,7 @@ Todo el objetivo del módulo está en el paquete `rag/` y en dos scripts, leído
 | 3. Embeddings + ChromaDB persistente | `rag/store.py`: `LocalEmbeddings`, `ingest()`; script `ingestar.py` |
 | 4. Búsqueda semántica (top-k) | `rag/store.py`: `Retriever.aretrieve()` (top_k 4, umbral de similitud 0.30) |
 | 5. Cadena LCEL recuperación → generación | `rag/chain.py`: `build_rag_chain()` y el prompt `SYSTEM_PROMPT` |
-| 6. Respuesta Pydantic, async y abstención | `rag/schemas.py`: `RespuestaRAG`; `RAGPipeline.answer()` con `.ainvoke()`; script `ejemplo_rag.py` |
+| 6. Respuesta Pydantic, async y abstención | `rag/schemas.py`: `RespuestaRAG`; punto de entrada `async def get_rag_response(query: str)` sobre `RAGPipeline.answer()` con `.ainvoke()`; script `ejemplo_rag.py` |
 
 La cadena central (`rag/chain.py`, `build_rag_chain()`) es una composición LCEL explícita:
 
@@ -53,7 +53,15 @@ RunnablePassthrough.assign(fragmentos=itemgetter("pregunta") | RunnableLambda(re
 )
 ```
 
-y `RAGPipeline.answer()` la ejecuta de forma asíncrona con `.ainvoke()` y `.with_retry()` (máximo 3 intentos).
+y `RAGPipeline.answer()` la ejecuta de forma asíncrona con `.ainvoke()` y `.with_retry()` (máximo 3 intentos). El
+punto de entrada pedido por la consigna es `get_rag_response(query)` (ver
+[Desde Python: `get_rag_response`](#desde-python-get_rag_response)):
+
+```python
+from rag import get_rag_response
+
+respuesta = await get_rag_response("¿Qué hago si la API de Azure devuelve HTTP 429?")  # RespuestaRAG
+```
 
 ## Contenido
 
@@ -85,7 +93,8 @@ y `RAGPipeline.answer()` la ejecuta de forma asíncrona con `.ainvoke()` y `.wit
 | Mismo modelo de embeddings al indexar y al consultar | `rag/store.py`: `LocalEmbeddings` (`jinaai/jina-embeddings-v2-base-es`); la colección guarda el modelo y se verifica en cada consulta |
 | Recuperación semántica con contexto acotado (top_k 3–5) | `rag/store.py`: `Retriever` (top_k 4 por defecto, `--top-k` 1 a 10, umbral de similitud 0.30) |
 | Cadena LCEL explícita de recuperación a generación | `rag/chain.py`: `build_rag_chain()` |
-| Invocación asíncrona del LLM | `rag/chain.py`: `RAGPipeline.answer()` con `.ainvoke()`; la búsqueda también es asíncrona (`aretrieve`) |
+| Punto de entrada `async def get_rag_response(query: str)` | `rag/chain.py`: `get_rag_response()`, exportada en `rag` (`from rag import get_rag_response`); devuelve `RespuestaRAG` |
+| Invocación asíncrona del LLM | `rag/chain.py`: `get_rag_response()` delega en `RAGPipeline.answer()`, que usa `.ainvoke()`; la búsqueda también es asíncrona (`aretrieve`) |
 | Respuesta validada con Pydantic (texto + fuentes) | `rag/schemas.py`: `RespuestaRAG` (`respuesta`, `fuentes`, `evidencia_suficiente`, `recuperados`) |
 | Prompt con grounding y abstención | `rag/chain.py`: `SYSTEM_PROMPT`; `rag/schemas.py`: `MENSAJE_ABSTENCION` |
 | Pregunta positiva y pregunta fuera de contexto reproducibles | `ejemplo_rag.py`: `EJEMPLOS["positivo"]` y `EJEMPLOS["negativo"]` |
@@ -99,7 +108,7 @@ rag/                     Pre-entrega 3: RAG local
   documents.py           Lectura de data/, limpieza y chunking por tokens
   store.py               Embeddings locales, ingesta idempotente en ChromaDB y búsqueda semántica
   schemas.py             RespuestaGenerada (salida del modelo) y RespuestaRAG (respuesta final validada)
-  chain.py               Prompt de grounding, cadena LCEL, reintentos y RAGPipeline.answer()
+  chain.py               Prompt de grounding, cadena LCEL, reintentos, RAGPipeline.answer() y get_rag_response()
 ingestar.py              Script de ingesta: data/ -> chroma_db/
 ejemplo_rag.py           Script de consulta: ejemplos positivo y negativo
 chroma_db/               Índice generado por ingestar.py (no se versiona)
@@ -216,6 +225,31 @@ python ejemplo_rag.py --top-k 3 --provider openai --model <modelo-openai> "..."
 
 Códigos de salida: `0` éxito, `2` configuración, pregunta o índice inválidos (por ejemplo, sin ingesta previa), `1`
 otro error.
+
+### Desde Python: `get_rag_response`
+
+El punto de entrada asíncrono `async def get_rag_response(query: str)` recibe la pregunta y devuelve la respuesta
+validada `RespuestaRAG`. Usa el mismo `.env` y el mismo índice `chroma_db/` que `ejemplo_rag.py` y delega en
+`RAGPipeline.answer()`, así conserva la recuperación, el grounding, la verificación de citas, los reintentos y los
+mismos errores (`InvalidInputError`, `KnowledgeBaseError`, `ConfigurationError` y errores del proveedor). El modelo
+de embeddings se carga una sola vez por proceso y se reutiliza en las llamadas siguientes.
+
+```python
+import asyncio
+
+from rag import get_rag_response
+
+
+async def main() -> None:
+    respuesta = await get_rag_response("¿Qué debo hacer cuando una automatización recibe HTTP 429 de la API de Azure?")
+    print(respuesta.respuesta)
+    print([fuente.id for fuente in respuesta.fuentes])  # p. ej. ['azure-api-throttling.md#0', ...]
+
+
+asyncio.run(main())
+```
+
+Una pregunta fuera de los documentos devuelve `evidencia_suficiente=False`, el mensaje de abstención y `fuentes=[]`.
 
 **Ejemplo positivo** — `¿Qué debo hacer cuando una automatización recibe HTTP 429 de la API de Azure?` (respondido por
 `azure-api-throttling.md`). Salida real con Anthropic `claude-haiku-4-5`, respuesta abreviada; el texto exacto
@@ -384,8 +418,9 @@ clave (`tests/rag_fakes.py`), un índice ChromaDB real en una carpeta temporal y
 - **Cadena RAG** (`test_rag_chain.py`): estructura LCEL explícita, ejecución asíncrona (el camino síncrono del modelo
   falso falla), respuesta fundamentada con fuentes verificadas, abstención sin contexto (sin llamar al LLM) y con
   contexto débil, reintento ante citas inventadas, campos faltantes o extra, salida truncada o malformada, errores
-  transitorios y permanentes del proveedor, preguntas inválidas, que los logs no filtren datos, el contrato Pydantic y
-  los scripts `ingestar.py` y `ejemplo_rag.py`.
+  transitorios y permanentes del proveedor, preguntas inválidas, que los logs no filtren datos, el contrato Pydantic,
+  los scripts `ingestar.py` y `ejemplo_rag.py` y el punto de entrada `get_rag_response(query)` (firma asíncrona,
+  delegación en el pipeline, abstención y errores conservados, modelo de embeddings compartido).
 - **Integración HTTP local** (`test_rag_http.py`): `ChatAnthropic` y `ChatOpenAI` reales contra un servidor en
   `127.0.0.1` que devuelve respuestas guionadas; verifica la cantidad exacta de solicitudes (sin reintentos ocultos).
 - **Pre-entregas 1 y 2**: los tests existentes (`test_extraction*.py`, `test_schemas.py`, `test_config_manager.py`,

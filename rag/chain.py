@@ -190,3 +190,26 @@ def create_rag_from_env(
     return RAGPipeline(
         retriever, build_chat_model(config), max_attempts=max_attempts, secret=config.api_key.get_secret_value()
     )
+
+
+_shared_embeddings: LocalEmbeddings | None = None
+
+
+def _default_embeddings() -> LocalEmbeddings:
+    """Un único modelo de embeddings por proceso: se carga (~640 MB en disco) una sola vez y se reutiliza."""
+    global _shared_embeddings
+    if _shared_embeddings is None:
+        _shared_embeddings = LocalEmbeddings()
+    return _shared_embeddings
+
+
+async def get_rag_response(query: str) -> RespuestaRAG:
+    """Punto de entrada asíncrono del RAG: responde `query` con los runbooks indexados o se abstiene.
+
+    Usa la configuración del `.env` y el índice local `chroma_db/` (antes: `python ingestar.py`) y delega en
+    `RAGPipeline.answer()`, así conserva la recuperación, el grounding, la verificación de citas, los reintentos y los
+    errores de `errors.py`. El modelo de embeddings se comparte entre llamadas; el chat model se crea en cada llamada
+    para no reutilizar un cliente HTTP asíncrono ligado a otro event loop.
+    """
+    pipeline = create_rag_from_env(embeddings=_default_embeddings())
+    return await pipeline.answer(query)
